@@ -747,8 +747,9 @@ function renderProps() {
   if (ids.length > 1) {
     const by = {}; for (const id of ids) { const t = sp.ents[id].type; by[t] = (by[t] || 0) + 1; }
     el.innerHTML = `<dl class="kv"><dt>선택</dt><dd>${ids.length.toLocaleString()}개</dd>${Object.entries(by).map(([k, v]) => `<dt>${esc(TYPE_KO[k] || k)}</dt><dd>${v}</dd>`).join('')}</dl>
-      <div class="pad"><button type="button" class="btn sm" id="selZoom">선택 객체로 확대</button></div>`;
+      <div class="pad row-btns"><button type="button" class="btn sm" id="selZoom">선택 객체로 확대</button><button type="button" class="btn sm ghost" id="selDxf">DXF로 내보내기</button></div>`;
     $('#selZoom').onclick = () => zoomToEnts(ids);
+    $('#selDxf').onclick = exportSelDxf;
     return;
   }
   const r = sp.ents[ids[0]], e = r.raw, d = S.drawing;
@@ -765,8 +766,9 @@ function renderProps() {
       <dt>핸들</dt><dd class="mono">${esc(r.handle || '-')}</dd>
       ${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd${/^[-\d.,\s/°]+$/.test(String(v)) ? ' class="mono"' : ''}>${esc(v)}</dd>`).join('')}
     </dl>
-    <div class="pad row-btns"><button type="button" class="btn sm" id="selZoom">이 객체로 확대</button><button type="button" class="btn sm ghost" id="selLayerOff">이 레이어 끄기</button></div>`;
+    <div class="pad row-btns"><button type="button" class="btn sm" id="selZoom">이 객체로 확대</button><button type="button" class="btn sm ghost" id="selDxf">DXF로 내보내기</button><button type="button" class="btn sm ghost" id="selLayerOff">이 레이어 끄기</button></div>`;
   $('#selZoom').onclick = () => zoomToEnts(ids);
+  $('#selDxf').onclick = exportSelDxf;
   $('#selLayerOff').onclick = () => { const l = d.layers.get(r.layer); if (l) { l.on = false; computeVis(); renderLayers(); setSel([]); } };
 }
 
@@ -800,6 +802,24 @@ function saveCSV(rows, base) {
   const csv = '\ufeff' + rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\r\n');
   const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
   a.download = (S.drawing?.meta.name.replace(/\.\w+$/, '') || 'drawing') + '_' + base + '.csv'; a.click();
+}
+function exportSelDxf() {
+  if (!S.sel.size) { toast('\ub0b4\ubcf4\ub0bc \uac1d\uccb4\ub97c \uba3c\uc800 \uc120\ud0dd\ud558\uc138\uc694'); return; }
+  const sp = S.space, sg = sp.segs, se = sp.segEnt, set = S.sel;
+  const lines = [];
+  for (let i = 0; i < se.length; i++) if (set.has(se[i])) lines.push(sg[i * 4], sg[i * 4 + 1], sg[i * 4 + 2], sg[i * 4 + 3]);
+  if (!lines.length) { toast('\uc120\ud0dd\ud55c \uac1d\uccb4\uc5d0\uc11c \uc120 \ub370\uc774\ud130\ub97c \ucc3e\uc744 \uc218 \uc5c6\uc2b5\ub2c8\ub2e4 (\ubb38\uc790\u00b7\uce58\uc218 \ub4f1\uc740 \uc9c0\uc6d0\ud558\uc9c0 \uc54a\uc2b5\ub2c8\ub2e4)'); return; }
+  const f = n => Number(n).toFixed(6);
+  let body = '0\nSECTION\n2\nENTITIES\n';
+  for (let i = 0; i < lines.length; i += 4) {
+    body += `0\nLINE\n8\n0\n10\n${f(lines[i])}\n20\n${f(lines[i + 1])}\n30\n0\n11\n${f(lines[i + 2])}\n21\n${f(lines[i + 3])}\n31\n0\n`;
+  }
+  body += '0\nENDSEC\n0\nEOF\n';
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([body], { type: 'application/dxf' }));
+  a.download = (S.drawing?.meta.name.replace(/\.\w+$/, '') || 'drawing') + '_\uc120\ud0dd\uc601\uc5ed.dxf';
+  a.click();
+  toast(`\uc120\ud0dd\ud55c ${set.size}\uac1c \uac1d\uccb4(\uc120\ubd84 ${lines.length / 4}\uac1c)\ub97c DXF\ub85c \ub0b4\ubcf4\ub0c8\uc2b5\ub2c8\ub2e4. 3D \ubcc0\ud658\uc5d0 \uc4f0\ub824\uba74 \uc774 \ud30c\uc77c\uc744 SolidCraft \uc2a4\ucf00\uce58\uc5d0 \uc0bd\uc785\ud558\uc138\uc694`);
 }
 if (IS_LOCAL) $$('.local-only').forEach(el => el.hidden = false);
 
@@ -865,6 +885,7 @@ function act(name, arg) {
     case 'txt-copy': if (!S.drawing) toast('먼저 도면을 여세요'); else $('#txtCopy').click(); break;
     case 'keys': $('#keys').hidden = false; $('#keys [data-close]').focus(); break;
     case 'sel-zoom': zoomToEnts([...S.sel]); break;
+    case 'sel-dxf': exportSelDxf(); break;
     case 'sel-clear': setSel([]); break;
     case 'sel-layer-off': { const r = S.space.ents[[...S.sel][0]]; const l = S.drawing.layers.get(r?.layer); if (l) { l.on = false; computeVis(); renderLayers(); setSel([]); } break; }
     case 'area-close': finishArea(); break;
@@ -945,7 +966,7 @@ function showCtx(x, y) {
   closeMenus();
   const I = (d) => `<svg viewBox="0 0 24 24" aria-hidden="true">${d}</svg>`;
   const it = (icon, label, a, arg, key = '', dis = false) => `<button type="button" role="menuitem" data-act="${a}"${arg != null ? ` data-arg="${arg}"` : ''}${dis ? ' disabled' : ''}>${I(icon)}<span>${label}</span>${key ? `<kbd>${key}</kbd>` : '<span></span>'}</button>`;
-  const P = { ext: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>', pan: '<path d="M12 3v18M3 12h18"/>', win: '<rect x="3" y="3" width="12" height="12" rx="1"/><path d="M18.5 18.5L21 21"/>', dist: '<path d="M3 17L17 3l4 4L7 21z"/>', area: '<path d="M4 18L7 5l12 3-2 11z"/>', pt: '<circle cx="12" cy="12" r="3"/><path d="M12 2v5M12 17v5M2 12h5M17 12h5"/>', x: '<path d="M6 6l12 12M18 6L6 18"/>', ok: '<path d="M5 12l5 5 9-10"/>', z: '<circle cx="11" cy="11" r="7"/><path d="M16 16l5 5"/>', off: '<path d="M3 3l18 18"/><path d="M12 3l9 5-9 5-9-5z"/>', snap: '<rect x="8" y="8" width="8" height="8"/>' };
+  const P = { ext: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>', pan: '<path d="M12 3v18M3 12h18"/>', win: '<rect x="3" y="3" width="12" height="12" rx="1"/><path d="M18.5 18.5L21 21"/>', dist: '<path d="M3 17L17 3l4 4L7 21z"/>', area: '<path d="M4 18L7 5l12 3-2 11z"/>', pt: '<circle cx="12" cy="12" r="3"/><path d="M12 2v5M12 17v5M2 12h5M17 12h5"/>', x: '<path d="M6 6l12 12M18 6L6 18"/>', ok: '<path d="M5 12l5 5 9-10"/>', z: '<circle cx="11" cy="11" r="7"/><path d="M16 16l5 5"/>', off: '<path d="M3 3l18 18"/><path d="M12 3l9 5-9 5-9-5z"/>', snap: '<rect x="8" y="8" width="8" height="8"/>', dxf: '<path d="M6 2h9l5 5v15H6z"/><path d="M15 2v5h5"/><path d="M9 13v5M9 13l3 5M12 13l3 5"/>' };
   let h = '';
   if (S.pending.length) {
     h += `<div class="mhead">${S.mode === 'area' ? '면적 측정 중' : '거리 측정 중'}</div>`;
@@ -953,7 +974,7 @@ function showCtx(x, y) {
     h += it(P.x, '측정 취소', 'cancel', null, 'Esc') + '<hr>';
   }
   if (S.sel.size) {
-    h += `<div class="mhead">선택 ${S.sel.size}개</div>` + it(P.z, '선택 객체로 확대', 'sel-zoom') + (S.sel.size === 1 ? it(P.off, '이 레이어 끄기', 'sel-layer-off') : '') + it(P.x, '선택 해제', 'sel-clear', null, 'Esc') + '<hr>';
+    h += `<div class="mhead">선택 ${S.sel.size}개</div>` + it(P.z, '선택 객체로 확대', 'sel-zoom') + it(P.dxf, 'DXF로 내보내기 (3D 변환용)', 'sel-dxf') + (S.sel.size === 1 ? it(P.off, '이 레이어 끄기', 'sel-layer-off') : '') + it(P.x, '선택 해제', 'sel-clear', null, 'Esc') + '<hr>';
   }
   h += it(P.ext, '전체 보기', 'extents', null, 'F') + it(P.pan, '화면 이동', 'mode', 'pan', 'P') + it(P.win, '창 확대', 'mode', 'zoomwin', 'W') + '<hr>';
   h += it(P.dist, '거리 측정', 'mode', 'dist', 'D') + it(P.area, '면적 측정', 'mode', 'area', 'A') + it(P.pt, '점 좌표', 'mode', 'point', 'I') + '<hr>';
