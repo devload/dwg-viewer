@@ -1,0 +1,14 @@
+{
+  "name": "drawing-viewer",
+  "version": "1.0.0",
+  "description": "브라우저에서 DWG·DXF 도면을 여는 단일 HTML 뷰어",
+  "license": "GPL-3.0-or-later",
+  "private": true,
+  "type": "module",
+  "scripts": { "build": "node build.mjs" },
+  "dependencies": {
+    "@mlightcad/dxf-json": "1.2.8",
+    "@mlightcad/libredwg-web": "0.7.14"
+  },
+  "devDependencies": { "esbuild": "0.28.2" }
+}

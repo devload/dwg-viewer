@@ -1,0 +1,507 @@
+<meta charset="utf-8">
+<title>도면 뷰어</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: CAD workstation — toolbar band / [panel | drawing canvas | properties] / layout tabs + status band */
+:root {
+  --bg: #eef1f4;         /* app ground, cool steel */
+  --surface: #ffffff;
+  --surface-2: #f5f7f9;
+  --line: #d6dce3;
+  --fg: #18202a;
+  --fg-2: #56616e;
+  --accent: #1f63c6;     /* drafting blue */
+  --accent-soft: #e3edfb;
+  --on-accent: #ffffff;
+  --sel: #2d8cff;
+  --meas: #e08a00;
+  --ok: #1b7f4b;
+  --warn: #b5560b;
+  --mark: #ffe08a;
+  --shadow: 0 6px 24px rgba(20, 32, 48, .14);
+  --font-ui: "IBM Plex Sans KR", "Malgun Gothic", "Apple SD Gothic Neo", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --r: 6px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #12161b; --surface: #1a1f26; --surface-2: #20262e; --line: #2d353f; --fg: #e4e9ef; --fg-2: #98a3b0;
+    --accent: #6aa5ff; --accent-soft: #1d2d45; --on-accent: #0b1a30; --sel: #4da3ff; --meas: #ffb020; --ok: #4cc38a; --warn: #f0a050; --mark: #6b5310;
+    --shadow: 0 8px 28px rgba(0, 0, 0, .45); color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #12161b; --surface: #1a1f26; --surface-2: #20262e; --line: #2d353f; --fg: #e4e9ef; --fg-2: #98a3b0;
+  --accent: #6aa5ff; --accent-soft: #1d2d45; --on-accent: #0b1a30; --sel: #4da3ff; --meas: #ffb020; --ok: #4cc38a; --warn: #f0a050; --mark: #6b5310;
+  --shadow: 0 8px 28px rgba(0, 0, 0, .45); color-scheme: dark;
+}
+[hidden] { display: none !important; }
+*, *::before, *::after { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--fg); font: 14px/1.45 var(--font-ui); overflow: hidden; }
+button, input { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+.muted { color: var(--fg-2); font-weight: 400; }
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+#app { height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr) auto auto; grid-template-columns: minmax(0, 1fr); }
+
+/* toolbar */
+.bar { background: var(--surface); border-bottom: 1px solid var(--line); min-width: 0; }
+.bar-in { display: flex; align-items: center; gap: 6px; padding-block: 6px; padding-left: max(12px, env(safe-area-inset-left, 0px)); padding-right: max(12px, env(safe-area-inset-right, 0px)); overflow-x: auto; scrollbar-width: none; }
+.brand { display: flex; align-items: center; gap: 8px; padding-right: 8px; margin-right: 2px; border-right: 1px solid var(--line); flex: none; }
+.brand .logo { width: 26px; height: 26px; border-radius: 5px; background: var(--accent); color: #fff; display: grid; place-items: center; font: 700 11px/1 var(--font-mono); letter-spacing: .02em; flex: none; }
+.brand .fn { max-width: 22ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.badge { font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 99px; background: var(--accent-soft); color: var(--accent); white-space: nowrap; }
+.grp { display: flex; gap: 2px; padding: 0 4px; border-right: 1px solid var(--line); }
+.grp:last-child { border-right: 0; }
+.tb { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 9px; border: 1px solid transparent; border-radius: var(--r); background: none; cursor: pointer; white-space: nowrap; color: var(--fg); }
+.tb:hover { background: var(--surface-2); border-color: var(--line); }
+.tb[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); border-color: color-mix(in srgb, var(--accent) 35%, transparent); }
+.tb.primary { background: var(--accent); color: var(--on-accent); }
+.tb.primary:hover { background: color-mix(in srgb, var(--accent) 88%, #000); }
+.tb .lbl { font-size: 13px; }
+.spacer { flex: 1; }
+
+/* main */
+main { overflow: hidden; display: grid; grid-template-columns: 300px minmax(0, 1fr) 290px; min-height: 0; position: relative; }
+#app.side-collapsed main { grid-template-columns: 0 minmax(0, 1fr) 290px; }
+#app.side-collapsed .side { visibility: hidden; }
+#app.props-collapsed main { grid-template-columns: 300px minmax(0, 1fr) 0; }
+#app.side-collapsed.props-collapsed main { grid-template-columns: 0 minmax(0, 1fr) 0; }
+#app.props-collapsed .props { visibility: hidden; }
+.side, .props { background: var(--surface); min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.side { border-right: 1px solid var(--line); }
+.props { border-left: 1px solid var(--line); }
+.stabs { display: flex; border-bottom: 1px solid var(--line); flex: none; }
+.stabs button { flex: 1; border: 0; background: none; padding: 10px 4px 9px; cursor: pointer; color: var(--fg-2); border-bottom: 2px solid transparent; font-size: 13px; font-weight: 500; }
+.stabs button[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+.spanel { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+.ptools { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--line); flex: none; }
+.ptools .sum { font-size: 12px; color: var(--fg-2); width: 100%; display: flex; justify-content: space-between; gap: 8px; }
+.inp { width: 100%; height: 32px; padding: 0 10px; border: 1px solid var(--line); border-radius: var(--r); background: var(--surface-2); }
+.inp:focus { outline: 2px solid var(--accent); outline-offset: -1px; background: var(--surface); }
+.chk { display: inline-flex; gap: 5px; align-items: center; font-size: 12px; color: var(--fg-2); cursor: pointer; }
+.btn { height: 30px; padding: 0 11px; border-radius: var(--r); border: 1px solid var(--line); background: var(--surface); cursor: pointer; font-size: 12.5px; font-weight: 500; white-space: nowrap; }
+.btn:hover { border-color: var(--accent); color: var(--accent); }
+.btn.sm { height: 28px; }
+.btn.ghost { background: none; }
+.list { list-style: none; margin: 0; padding: 4px 0; overflow-y: auto; flex: 1; min-height: 0; }
+.row { display: flex; align-items: center; gap: 8px; padding: 4px 12px; min-height: 32px; font-size: 13px; }
+.row:hover { background: var(--surface-2); }
+.row.link { cursor: pointer; }
+.row.active { background: var(--accent-soft); }
+.row.off .nm, .row.off .sw { opacity: .4; }
+.row .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .tx { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .lt { font-size: 11px; color: var(--fg-2); max-width: 9ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .ct { font: 12px var(--font-mono); color: var(--fg-2); font-variant-numeric: tabular-nums; }
+.row .ct.strong { color: var(--fg); font-weight: 600; font-size: 13px; }
+.row mark { background: var(--mark); color: inherit; border-radius: 2px; }
+.eye { border: 0; background: none; padding: 3px; border-radius: 4px; cursor: pointer; color: var(--fg-2); display: grid; }
+.eye[aria-pressed="true"] { color: var(--fg); }
+.eye svg { width: 16px; height: 16px; }
+.solo { border: 1px solid var(--line); background: none; font-size: 11px; padding: 1px 6px; border-radius: 4px; cursor: pointer; color: var(--fg-2); opacity: 0; }
+.row:hover .solo, .solo:focus-visible { opacity: 1; }
+.sw { width: 12px; height: 12px; border-radius: 3px; background: var(--c); box-shadow: inset 0 0 0 1px rgba(127, 127, 127, .45); flex: none; display: inline-block; vertical-align: -1px; margin-right: 6px; }
+.row .sw { margin-right: 0; }
+.none { padding: 18px 12px; color: var(--fg-2); font-size: 13px; }
+.scroll { overflow-y: auto; flex: 1; min-height: 0; }
+.kv { display: grid; grid-template-columns: minmax(78px, auto) 1fr; gap: 6px 12px; margin: 0; padding: 12px; font-size: 13px; }
+.kv dt { color: var(--fg-2); }
+.kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.scroll h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--fg-2); margin: 10px 12px 6px; font-weight: 600; }
+.tbl { width: calc(100% - 24px); margin: 0 12px 12px; border-collapse: collapse; font-size: 12.5px; }
+.tbl td { padding: 5px 0; border-bottom: 1px solid var(--line); }
+.tbl .num { text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.tbl.warn td:first-child { color: var(--warn); }
+.okc { color: var(--ok); font-weight: 600; }
+.warnc { color: var(--warn); }
+.ok { color: var(--ok); margin: 4px 12px 14px; font-size: 13px; }
+.pad { padding: 0 12px 12px; margin: 0; }
+p.pad { padding-top: 14px; font-size: 13px; }
+.row-btns { display: flex; gap: 6px; flex-wrap: wrap; }
+.phead { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-bottom: 1px solid var(--line); flex: none; }
+.phead h2 { font-size: 13px; margin: 0; font-weight: 600; }
+.ptype { padding: 12px 12px 0; font-size: 15px; }
+#propsClose { display: none; }
+.meas { border-top: 1px solid var(--line); flex: none; }
+.meas ul { list-style: none; margin: 0; padding: 0 12px 10px; font-size: 12.5px; display: grid; gap: 3px; max-height: 140px; overflow-y: auto; }
+
+/* canvas */
+.stage { position: relative; min-width: 0; min-height: 0; overflow: hidden; background: #1d232b; touch-action: none; }
+.stage[data-bg="light"] { background: #ffffff; }
+#cv { position: absolute; inset: 0; display: block; cursor: default; }
+#cv[data-mode="pan"] { cursor: grab; }
+#cv[data-mode="dist"], #cv[data-mode="area"], #cv[data-mode="zoomwin"] { cursor: crosshair; }
+.zoomctl { position: absolute; right: 12px; bottom: 12px; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); box-shadow: var(--shadow); overflow: hidden; }
+.zoomctl button { width: 36px; height: 36px; border: 0; background: none; cursor: pointer; display: grid; place-items: center; color: var(--fg); }
+.zoomctl button + button { border-top: 1px solid var(--line); }
+.zoomctl button:hover { background: var(--surface-2); }
+#hint { position: absolute; left: 12px; bottom: 12px; right: 64px; font-size: 12px; color: #c9d2dc; pointer-events: none; text-shadow: 0 1px 2px rgba(0, 0, 0, .6); }
+.stage[data-bg="light"] #hint { color: #4a5563; text-shadow: none; }
+#welcome:not([hidden]) ~ #hint, #welcome:not([hidden]) ~ .zoomctl { display: none; }
+#spaceEmpty { position: absolute; inset: 0; display: grid; place-items: center; color: #9aa6b4; pointer-events: none; font-size: 14px; }
+
+/* ribbon (benchmarked on AutoCAD / DWG TrueView) */
+.rb { background: var(--surface); border-bottom: 1px solid var(--line); min-width: 0; position: relative; z-index: 30; }
+.rb-top { background: var(--surface-2); border-bottom: 1px solid var(--line); }
+.rb-top-in { display: flex; align-items: stretch; gap: 6px; min-height: 36px; padding-left: max(8px, env(safe-area-inset-left, 0px)); padding-right: max(8px, env(safe-area-inset-right, 0px)); }
+.appbtn { display: inline-flex; align-items: center; gap: 7px; border: 0; margin: 4px 0; padding: 0 10px 0 5px; border-radius: 6px; background: var(--accent); color: var(--on-accent); font-weight: 600; font-size: 13px; cursor: pointer; flex: none; }
+.appbtn .logo { width: 22px; height: 22px; border-radius: 4px; background: color-mix(in srgb, var(--on-accent) 18%, transparent); display: grid; place-items: center; }
+.appbtn .caret { width: 14px; height: 14px; }
+.appbtn[aria-expanded="true"] { filter: brightness(.92); }
+.qat { display: flex; align-items: center; gap: 1px; padding: 0 6px; border-right: 1px solid var(--line); flex: none; }
+.qbtn { width: 30px; height: 30px; display: grid; place-items: center; border: 1px solid transparent; border-radius: 5px; background: none; cursor: pointer; color: var(--fg); flex: none; align-self: center; }
+.qbtn svg { width: 16px; height: 16px; }
+.qbtn:hover { background: var(--surface); border-color: var(--line); }
+.qbtn[aria-pressed="true"] { color: var(--accent); }
+.rb-tabs { display: flex; align-items: flex-end; gap: 2px; padding-left: 4px; flex: none; }
+.rb-tabs button { border: 1px solid transparent; border-bottom: 0; background: none; padding: 7px 14px 8px; font-size: 13px; font-weight: 500; color: var(--fg-2); cursor: pointer; border-radius: 6px 6px 0 0; margin-bottom: -1px; }
+.rb-tabs button:hover { color: var(--fg); }
+.rb-tabs button[aria-selected="true"] { background: var(--surface); border-color: var(--line); color: var(--accent); font-weight: 600; }
+.rb.min .rb-tabs button[aria-selected="true"] { background: none; border-color: transparent; }
+.rb-title { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: center; font-size: 13px; color: var(--fg-2); }
+.rb-title .fn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40ch; }
+#ribbonMin svg { transition: transform .15s; }
+.rb.min #ribbonMin svg { transform: rotate(180deg); }
+.rb-body { overflow-x: auto; scrollbar-width: thin; }
+.rb.min .rb-body { display: none; }
+.rb-pane { display: flex; align-items: stretch; padding: 4px max(8px, env(safe-area-inset-left, 0px)) 0; min-height: 88px; width: max-content; min-width: 100%; }
+.rp { display: flex; flex-direction: column; border-right: 1px solid var(--line); padding: 0 6px; }
+.rp-items { display: flex; align-items: flex-start; gap: 2px; flex: 1; }
+.rp-title { text-align: center; font-size: 11px; color: var(--fg-2); padding: 2px 0 4px; letter-spacing: .02em; white-space: nowrap; }
+.rstack { display: flex; flex-direction: column; gap: 1px; }
+.rbtn { display: flex; align-items: center; border: 1px solid transparent; background: none; color: var(--fg); cursor: pointer; border-radius: 5px; white-space: nowrap; }
+.rbtn:hover { background: var(--surface-2); border-color: var(--line); }
+.rbtn[aria-pressed="true"] { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 35%, transparent); color: var(--accent); }
+.rbtn:disabled { opacity: .4; cursor: default; }
+.rbtn.lg { flex-direction: column; justify-content: flex-start; gap: 4px; width: 62px; height: 64px; padding: 7px 2px 4px; font-size: 12px; line-height: 1.2; }
+.rbtn.lg svg { width: 26px; height: 26px; stroke-width: 1.5; }
+.rbtn.lg span { white-space: normal; text-align: center; }
+.rbtn.sm { gap: 6px; height: 21px; padding: 0 8px 0 4px; font-size: 12px; }
+.rbtn.sm svg { width: 15px; height: 15px; }
+
+/* dropdown & context menus */
+.menu { position: fixed; z-index: 70; min-width: 220px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow); padding: 5px; display: grid; }
+.menu button { display: grid; grid-template-columns: 20px 1fr auto; align-items: center; gap: 10px; border: 0; background: none; text-align: left; padding: 7px 10px; border-radius: 5px; font-size: 13px; cursor: pointer; color: var(--fg); }
+.menu button:hover, .menu button:focus-visible { background: var(--accent-soft); color: var(--accent); outline: none; }
+.menu button svg { width: 16px; height: 16px; }
+.menu button:disabled { opacity: .4; cursor: default; background: none; color: var(--fg); }
+.menu kbd { margin: 0; }
+.menu hr { border: 0; border-top: 1px solid var(--line); margin: 4px 2px; }
+.menu .pop-title, .menu .mhead { font-size: 11px; font-weight: 600; color: var(--fg-2); padding: 4px 10px 2px; letter-spacing: .04em; }
+.pop { min-width: 180px; }
+.pop label { display: flex; gap: 8px; align-items: center; padding: 6px 10px; font-size: 13px; cursor: pointer; border-radius: 5px; }
+.pop label:hover { background: var(--surface-2); }
+.keytbl td { padding: 7px 10px 7px 0; }
+.keytbl td:nth-child(odd) { white-space: nowrap; }
+.sbgrp { display: inline-flex; }
+.sbgrp #snapBtn { border-radius: 4px 0 0 4px; }
+.caretbtn { border-left: 0 !important; border-radius: 0 4px 4px 0 !important; padding: 2px 3px !important; display: grid; place-items: center; }
+.caretbtn svg { width: 13px; height: 13px; }
+.status .zoom { font-family: var(--font-mono); font-variant-numeric: tabular-nums; min-width: 6ch; text-align: right; }
+
+/* empty state */
+#welcome { position: absolute; inset: 0; display: grid; place-items: center; padding: 16px; overflow-y: auto; }
+.wcard { width: 100%; max-width: 520px; background: var(--surface); color: var(--fg); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); padding: 26px 26px 20px; display: grid; gap: 16px; }
+.wcard h1 { margin: 0; font-size: 20px; line-height: 1.35; text-wrap: balance; }
+.wcard .lead { margin: -8px 0 0; color: var(--fg-2); font-size: 13.5px; }
+.wdrop { border: 2px dashed var(--line); border-radius: 10px; padding: 22px 16px; display: grid; justify-items: center; gap: 10px; text-align: center; background: var(--surface-2); }
+.wdrop .big { height: 40px; padding: 0 18px; font-size: 14px; font-weight: 600; }
+.wdrop small { color: var(--fg-2); font-size: 12.5px; }
+.wfmt { width: 100%; border-collapse: collapse; font-size: 13px; }
+.wfmt td { padding: 7px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+.wfmt td:first-child { width: 64px; font: 600 12.5px var(--font-mono); color: var(--accent); }
+.wsafe { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: start; font-size: 13px; color: var(--fg-2); }
+.wsafe svg { color: var(--ok); margin-top: 2px; }
+.wkeys { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: var(--fg-2); }
+kbd { font: 600 11px var(--font-mono); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; background: var(--surface-2); color: var(--fg); margin-right: 4px; }
+.wfoot { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: 12px; color: var(--fg-2); border-top: 1px solid var(--line); padding-top: 12px; }
+.linkbtn { border: 0; background: none; padding: 0; color: var(--accent); cursor: pointer; font-size: inherit; text-decoration: underline; text-underline-offset: 2px; }
+
+/* about */
+#about .card { max-width: 640px; max-height: calc(100dvh - 32px); display: flex; flex-direction: column; padding: 0; overflow: hidden; }
+.ahead { padding: 20px 24px 12px; border-bottom: 1px solid var(--line); }
+.ahead h2 { margin: 0; }
+.ahead p { margin: 4px 0 0; font-size: 13px; }
+.abody { padding: 14px 24px; overflow-y: auto; min-height: 0; flex: 1 1 auto; font-size: 13.5px; display: grid; gap: 14px; }
+.abody h3 { margin: 0 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--fg-2); }
+.abody p { margin: 0; color: var(--fg); }
+.abody .note { color: var(--fg-2); font-size: 12.5px; }
+.lic { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.lic th, .lic td { text-align: left; padding: 6px 8px 6px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+.lic th { color: var(--fg-2); font-weight: 600; }
+.tblwrap { overflow-x: auto; }
+details summary { cursor: pointer; color: var(--accent); font-size: 13px; }
+details pre { white-space: pre-wrap; font: 11.5px/1.5 var(--font-mono); background: var(--surface-2); border: 1px solid var(--line); border-radius: 6px; padding: 12px; max-height: 300px; overflow-y: auto; margin: 8px 0 0; }
+.afoot { padding: 12px 24px 18px; border-top: 1px solid var(--line); display: flex; justify-content: flex-end; }
+
+/* footer: layout tabs + status */
+.foot { background: var(--surface); border-top: 1px solid var(--line); }
+.foot-in { display: flex; align-items: center; gap: 12px; padding-left: max(12px, env(safe-area-inset-left, 0px)); padding-right: max(12px, env(safe-area-inset-right, 0px)); min-height: 34px; }
+#tabs { display: flex; gap: 2px; overflow-x: auto; min-width: 0; flex: 1; scrollbar-width: thin; }
+#tabs button { border: 1px solid transparent; border-top: 0; background: none; padding: 6px 12px 7px; font-size: 12.5px; cursor: pointer; white-space: nowrap; color: var(--fg-2); border-radius: 0 0 5px 5px; }
+#tabs button[aria-selected="true"] { background: var(--bg); color: var(--fg); border-color: var(--line); font-weight: 600; }
+.status { display: flex; gap: 14px; align-items: center; font-size: 12px; color: var(--fg-2); white-space: nowrap; }
+.status .xy { font-family: var(--font-mono); font-variant-numeric: tabular-nums; color: var(--fg); min-width: 23ch; text-align: right; }
+.status button { border: 1px solid var(--line); background: none; border-radius: 4px; padding: 2px 8px; font-size: 12px; cursor: pointer; color: var(--fg-2); }
+.status button[aria-pressed="true"] { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); background: var(--accent-soft); }
+.tags { border-top: 1px solid var(--line); background: var(--surface-2); }
+.tags-in { display: flex; flex-wrap: wrap; gap: 4px 10px; padding-block: 4px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); font-size: 11.5px; color: var(--fg-2); }
+.tags-in span { white-space: nowrap; }
+
+/* overlays */
+.overlay { position: fixed; inset: 0; display: grid; place-items: center; z-index: 50; background: color-mix(in srgb, var(--bg) 55%, transparent); backdrop-filter: blur(2px); padding: 16px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); padding: 22px 24px; max-width: 460px; width: 100%; }
+.card h2 { margin: 0 0 8px; font-size: 17px; text-wrap: balance; }
+.card p { margin: 0 0 12px; color: var(--fg-2); }
+.card ol { margin: 0 0 16px; padding-left: 20px; color: var(--fg-2); display: grid; gap: 4px; }
+.card .acts { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+.spin { width: 30px; height: 30px; border-radius: 50%; border: 3px solid var(--line); border-top-color: var(--accent); animation: sp 0.8s linear infinite; margin-bottom: 12px; }
+@keyframes sp { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spin { animation-duration: 3s; } }
+#loading .card { text-align: center; max-width: 320px; display: grid; justify-items: center; }
+#drop { border: 3px dashed var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); font-size: 18px; font-weight: 600; color: var(--accent); pointer-events: none; }
+#toast { position: fixed; left: 50%; bottom: 78px; transform: translateX(-50%); background: var(--fg); color: var(--surface); padding: 9px 16px; border-radius: 8px; font-size: 13px; z-index: 60; box-shadow: var(--shadow); max-width: calc(100% - 32px); text-align: center; }
+#copyFallback { position: fixed; left: 16px; right: 16px; bottom: 120px; height: 120px; z-index: 61; font: 12px var(--font-mono); }
+#scrim { display: none; }
+a { color: var(--accent); }
+
+/* narrow screens: panels become drawers over the canvas */
+@media (max-width: 860px) {
+  main, #app.side-collapsed main, #app.props-collapsed main, #app.side-collapsed.props-collapsed main { grid-template-columns: minmax(0, 1fr); }
+  #app.props-collapsed .props { visibility: visible; }
+  .side, .props { position: absolute; top: 0; bottom: 0; z-index: 20; width: min(340px, 88vw); box-shadow: var(--shadow); transition: transform .2s ease; }
+  .side { left: 0; transform: translateX(-102%); visibility: visible !important; }
+  .props { right: 0; transform: translateX(102%); }
+  #app.side-open .side { transform: none; }
+  #app.props-open .props { transform: none; }
+  #app.side-open #scrim, #app.props-open #scrim { display: block; position: absolute; inset: 0; z-index: 15; background: rgba(0, 0, 0, .35); }
+  #propsClose { display: inline-flex; }
+  .tb .lbl { display: none; }
+  .rb-title, .qat { display: none; }
+  .rb-tabs button { padding: 7px 10px 8px; }
+  .rb-pane { min-height: 0; padding-top: 2px; }
+  .rp-title { display: none; }
+  .rp { padding: 2px 3px; }
+  .rstack { flex-direction: row; gap: 2px; }
+  .rbtn.sm { flex-direction: column; justify-content: flex-start; gap: 3px; width: 52px; height: 52px; padding: 6px 1px 3px; font-size: 11px; }
+  .rbtn.sm span, .rbtn.lg span { white-space: normal; text-align: center; line-height: 1.15; }
+  .rbtn.sm svg { width: 20px; height: 20px; }
+  .rbtn.lg { width: 52px; height: 52px; padding: 6px 1px 3px; font-size: 11px; }
+  .rbtn.lg svg { width: 20px; height: 20px; stroke-width: 1.7; }
+  .tb.primary .lbl, .tb.keep .lbl { display: inline; }
+  .brand .fn { max-width: 9ch; font-size: 13px; }
+  .status .opt { display: none; }
+  .status .xy { min-width: 0; }
+  #hint { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { .side, .props { transition: none; } }
+</style>
+
+<div id="app">
+  <header class="rb" id="ribbon">
+    <div class="rb-top">
+      <div class="rb-top-in">
+        <button type="button" class="appbtn" id="appBtn" aria-haspopup="menu" aria-expanded="false" title="파일 메뉴"><span class="logo" aria-hidden="true"><svg viewBox="0 0 24 24" style="width:15px;height:15px"><path d="M4 20L20 4M4 20h7M4 20v-7M14 6l4 4"/></svg></span><span>파일</span><svg viewBox="0 0 24 24" class="caret" aria-hidden="true"><path d="M7 10l5 5 5-5"/></svg></button>
+        <div class="qat" aria-label="빠른 실행">
+          <button type="button" class="qbtn" data-open title="도면 열기 (Ctrl+O)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></button>
+          <button type="button" class="qbtn" data-act="extents" title="전체 보기 (F)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+          <button type="button" class="qbtn" data-mode="dist" title="거리 측정 (D)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17L17 3l4 4L7 21z"/><path d="M7 13l2 2M10 10l2 2M13 7l2 2"/></svg></button>
+        </div>
+        <div class="rb-tabs" role="tablist" aria-label="리본 메뉴">
+          <button type="button" role="tab" data-rtab="home" aria-selected="true">홈</button>
+          <button type="button" role="tab" data-rtab="view" aria-selected="false">보기</button>
+          <button type="button" role="tab" data-rtab="meas" aria-selected="false">측정</button>
+          <button type="button" role="tab" data-rtab="tools" aria-selected="false">도구</button>
+        </div>
+        <div class="rb-title"><span class="fn" id="filename">도면 뷰어</span></div>
+        <button type="button" class="qbtn" id="ribbonMin" title="리본 접기/펼치기" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 14l5-5 5 5"/></svg></button>
+      </div>
+    </div>
+    <div class="rb-body" id="ribbonBody">
+      <div class="rb-pane" data-pane="home"><div class="rp"><div class="rp-items"><button type="button" class="rbtn lg " data-open title="도면 열기 (Ctrl+O)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span>열기</span></button><div class="rstack"><button type="button" class="rbtn sm " data-act="close" title="도면 닫기"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg><span>닫기</span></button><button type="button" class="rbtn sm local-only" data-act="png" title="현재 화면을 이미지로 저장"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="M21 16l-5-5-8 8"/></svg><span>PNG 저장</span></button></div></div><div class="rp-title">파일</div></div><div class="rp"><div class="rp-items"><button type="button" class="rbtn lg " data-mode="select" title="선택 (Esc)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3l14 8-6 2-2 6z"/></svg><span>선택</span></button><div class="rstack"><button type="button" class="rbtn sm " data-mode="pan" title="화면 이동 (P)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18M3 12h18M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3"/></svg><span>이동</span></button><button type="button" class="rbtn sm " data-mode="zoomwin" title="창 확대 (W)"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="12" height="12" rx="1" stroke-dasharray="3 2"/><circle cx="15.5" cy="15.5" r="4"/><path d="M18.5 18.5L21 21"/></svg><span>창 확대</span></button><button type="button" class="rbtn sm " data-act="extents" title="전체 보기 (F)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg><span>전체 보기</span></button></div><div class="rstack"><button type="button" class="rbtn sm " data-act="zin" title="확대 (+)"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M11 8v6M8 11h6M16 16l5 5"/></svg><span>확대</span></button><button type="button" class="rbtn sm " data-act="zout" title="축소 (-)"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M8 11h6M16 16l5 5"/></svg><span>축소</span></button></div></div><div class="rp-title">탐색</div></div><div class="rp"><div class="rp-items"><button type="button" class="rbtn lg " data-mode="dist" title="거리 측정 (D)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17L17 3l4 4L7 21z"/><path d="M7 13l2 2M10 10l2 2M13 7l2 2"/></svg><span>거리</span></button><button type="button" class="rbtn lg " data-mode="area" title="면적 측정 (A)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 18L7 5l12 3-2 11z"/></svg><span>면적</span></button><div class="rstack"><button type="button" class="rbtn sm " data-mode="point" title="점 좌표 확인 (I)"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v5M12 17v5M2 12h5M17 12h5"/></svg><span>좌표</span></button></div></div><div class="rp-title">측정</div></div><div class="rp"><div class="rp-items"><button type="button" class="rbtn lg " data-act="panel" data-panel-open="pLayers" title="레이어 패널"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/></svg><span>레이어</span></button><div class="rstack"><button type="button" class="rbtn sm " data-act="panel" data-panel-open="pBlocks" title="블록 집계"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M17.5 14v7M14 17.5h7"/></svg><span>블록 집계</span></button><button type="button" class="rbtn sm " data-act="panel" data-panel-open="pTexts" title="문자 검색 (Ctrl+F)"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M16 16l5 5"/></svg><span>문자 검색</span></button><button type="button" class="rbtn sm " data-act="props" title="속성 창 열기/닫기"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16M17.5 8h1M17.5 11h1"/></svg><span>속성 창</span></button></div></div><div class="rp-title">패널</div></div></div>
+      <div class="rb-pane" data-pane="view" hidden><div class="rp"><div class="rp-items"><button type="button" class="rbtn lg " data-act="extents" title="전체 보기 (F)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg><span>전체 보기</span></button><div class="rstack"><button type="button" class="rbtn sm " data-act="zin"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M11 8v6M8 11h6M16 16l5 5"/></svg><span>확대</span></button><button type="button" class="rbtn sm " data-act="zout"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M8 11h6M16 16l5 5"/></svg><span>축소</span></button><button type="button" class="rbtn sm " data-mode="zoomwin"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="12" height="12" rx="1" stroke-dasharray="3 2"/><circle cx="15.5" cy="15.5" r="4"/><path d="M18.5 18.5L21 21"/></svg><span>창 확대</span></button></div></div><div class="rp-title">화면</div></div><div class="rp"><div class="rp-items"><button type="button" class="rbtn lg " data-act="bg" title="배경색 전환"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor"/></svg><span>검정 배경</span></button><div class="rstack"><button type="button" class="rbtn sm " data-act="mono" title="모든 객체를 한 색으로"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg><span>흑백</span></button><button type="button" class="rbtn sm " data-act="dash" title="점선·중심선 패턴 표시"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4M10 12h4M17 12h4"/></svg><span>선종류</span></button><button type="button" class="rbtn sm " data-act="text" title="문자 표시"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6V4h14v2M12 4v16M9 20h6"/></svg><span>문자</span></button></div></div><div class="rp-title">표시</div></div><div class="rp"><div class="rp-items"><button type="button" class="rbtn lg " data-act="full" title="전체 화면"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/></svg><span>전체 화면</span></button><div class="rstack"><button type="button" class="rbtn sm " data-act="side" title="왼쪽 패널 열기/닫기"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg><span>탐색 패널</span></button><button type="button" class="rbtn sm " data-act="props" title="오른쪽 속성 창 열기/닫기"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16M17.5 8h1M17.5 11h1"/></svg><span>속성 창</span></button></div></div><div class="rp-title">창</div></div></div>
+      <div class="rb-pane" data-pane="meas" hidden><div class="rp"><div class="rp-items"><button type="button" class="rbtn lg " data-mode="dist" title="거리 측정 (D)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17L17 3l4 4L7 21z"/><path d="M7 13l2 2M10 10l2 2M13 7l2 2"/></svg><span>거리</span></button><button type="button" class="rbtn lg " data-mode="area" title="면적 측정 (A)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 18L7 5l12 3-2 11z"/></svg><span>면적</span></button><button type="button" class="rbtn lg " data-mode="point" title="점 좌표 확인 (I)"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v5M12 17v5M2 12h5M17 12h5"/></svg><span>좌표</span></button></div><div class="rp-title">측정</div></div><div class="rp"><div class="rp-items"><button type="button" class="rbtn lg " data-act="snap" title="객체 스냅 켜기/끄기 (S)"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="8" height="8"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg><span>스냅</span></button><div class="rstack"><button type="button" class="rbtn sm " data-snapk="0"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10"/></svg><span>끝점</span></button><button type="button" class="rbtn sm " data-snapk="1"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 6l7 12H5z"/></svg><span>중간점</span></button><button type="button" class="rbtn sm " data-snapk="2"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="6"/></svg><span>중심</span></button></div><div class="rstack"><button type="button" class="rbtn sm " data-snapk="3"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5l7 7-7 7-7-7z"/></svg><span>사분점·노드</span></button><button type="button" class="rbtn sm " data-snapk="4"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12"/><path d="M12 6v12M6 12h12"/></svg><span>삽입점</span></button></div></div><div class="rp-title">객체 스냅</div></div><div class="rp"><div class="rp-items"><div class="rstack"><button type="button" class="rbtn sm " data-act="meas-copy" title="측정 결과를 표로 복사"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg><span>결과 복사</span></button><button type="button" class="rbtn sm " data-act="meas-clear" title="측정 결과 지우기"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg><span>모두 지우기</span></button></div></div><div class="rp-title">결과</div></div></div>
+      <div class="rb-pane" data-pane="tools" hidden><div class="rp"><div class="rp-items"><button type="button" class="rbtn lg " data-act="panel" data-panel-open="pTexts" title="문자 검색 (Ctrl+F)"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M16 16l5 5"/></svg><span>문자 검색</span></button><button type="button" class="rbtn lg " data-act="panel" data-panel-open="pBlocks" title="블록 집계"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M17.5 14v7M14 17.5h7"/></svg><span>블록 집계</span></button></div><div class="rp-title">찾기</div></div><div class="rp"><div class="rp-items"><button type="button" class="rbtn lg " data-act="panel" data-panel-open="pInfo" title="도면 정보"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/></svg><span>도면 정보</span></button><button type="button" class="rbtn lg " data-act="panel" data-panel-open="pLayers" title="레이어 패널"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/></svg><span>레이어</span></button></div><div class="rp-title">도면</div></div><div class="rp"><div class="rp-items"><div class="rstack"><button type="button" class="rbtn sm " data-act="blk-copy" title="블록 집계표를 엑셀용으로 복사"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg><span>블록 표 복사</span></button><button type="button" class="rbtn sm " data-act="txt-copy" title="문자 검색 결과 복사"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg><span>문자 목록 복사</span></button><button type="button" class="rbtn sm local-only" data-act="png"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="M21 16l-5-5-8 8"/></svg><span>PNG 저장</span></button></div></div><div class="rp-title">내보내기</div></div><div class="rp"><div class="rp-items"><button type="button" class="rbtn lg " data-act="keys" title="단축키 보기"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg><span>단축키</span></button><button type="button" class="rbtn lg " data-about title="프로그램 정보와 라이선스"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/></svg><span>프로그램 정보</span></button></div><div class="rp-title">도움말</div></div></div>
+    </div>
+  </header>
+
+  <main>
+    <aside class="side" aria-label="도면 탐색">
+      <div class="stabs" role="tablist">
+        <button type="button" role="tab" data-panel="pLayers" aria-selected="true">레이어</button>
+        <button type="button" role="tab" data-panel="pBlocks" aria-selected="false">블록 집계</button>
+        <button type="button" role="tab" data-panel="pTexts" aria-selected="false">문자 검색</button>
+        <button type="button" role="tab" data-panel="pInfo" aria-selected="false">도면 정보</button>
+      </div>
+      <section class="spanel" id="pLayers">
+        <div class="ptools">
+          <input class="inp" id="layerFilter" type="search" placeholder="레이어 이름 찾기" autocomplete="off">
+          <div class="sum"><span id="layerCount"></span><span><button type="button" class="btn sm ghost" id="layersAllOn">모두 켜기</button> <button type="button" class="btn sm ghost" id="layersAllOff">모두 끄기</button></span></div>
+        </div>
+        <ul class="list" id="layerList"><li class="none">도면을 열면 레이어 목록이 여기에 표시됩니다.</li></ul>
+      </section>
+      <section class="spanel" id="pBlocks" hidden>
+        <div class="ptools">
+          <input class="inp" id="blkFilter" type="search" placeholder="블록 이름 찾기 (예: BOLT, NUT)" autocomplete="off">
+          <label class="chk"><input type="checkbox" id="blkNested"> 중첩 블록 포함</label>
+          <label class="chk"><input type="checkbox" id="blkAnon"> 익명 블록 포함</label>
+          <div class="sum"><span id="blkSummary"></span><span><button type="button" class="btn sm" id="blkCopy">표 복사</button> <button type="button" class="btn sm local-only" id="blkCsv" hidden>CSV</button></span></div>
+        </div>
+        <ul class="list" id="blkList"><li class="none">도면을 열면 블록 이름별 개수가 여기에 표시됩니다.</li></ul>
+      </section>
+      <section class="spanel" id="pTexts" hidden>
+        <div class="ptools">
+          <input class="inp" id="txtFilter" type="search" placeholder="품번, 치수, 주기사항 검색" autocomplete="off">
+          <div class="sum"><span id="txtSummary"></span><button type="button" class="btn sm" id="txtCopy">목록 복사</button></div>
+        </div>
+        <ul class="list" id="txtList"><li class="none">도면을 열면 문자를 검색할 수 있습니다.</li></ul>
+      </section>
+      <section class="spanel" id="pInfo" hidden>
+        <div class="scroll" id="infoBody"></div>
+      </section>
+    </aside>
+
+    <div class="stage" data-bg="dark">
+      <canvas id="cv" aria-label="도면 캔버스"></canvas>
+      <div id="welcome">
+        <div class="wcard">
+          <h1>도면 파일을 열어 주세요</h1>
+          <p class="lead">AutoCAD 없이 DWG·DXF 도면을 보고, 재고, 찾을 수 있습니다.</p>
+          <div class="wdrop">
+            <button type="button" class="btn big tb primary" data-open data-welcome><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span class="lbl">도면 열기</span></button>
+            <small>또는 파일을 이 화면에 끌어다 놓으세요</small>
+          </div>
+          <table class="wfmt"><tbody>
+            <tr><td>.dwg</td><td>AutoCAD R13 ~ 2018 이후 형식 (AC1012 ~ AC1032)</td></tr>
+            <tr><td>.dxf</td><td>텍스트 DXF (UTF-8, EUC-KR 한글 지원)</td></tr>
+          </tbody></table>
+          <div class="wsafe"><svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg><span>파일은 이 브라우저 안에서만 처리됩니다. 서버로 업로드하지 않고, 인터넷이 끊겨도 동작합니다.</span></div>
+          <div class="wkeys"><span><kbd>F</kbd>전체 보기</span><span><kbd>W</kbd>창 확대</span><span><kbd>D</kbd>거리</span><span><kbd>A</kbd>면적</span><span><kbd>S</kbd>스냅</span><span><kbd>Esc</kbd>취소</span></div>
+          <div class="wfoot"><span id="welcomeVer"></span><button type="button" class="linkbtn" data-about>프로그램 정보 · 라이선스</button></div>
+        </div>
+      </div>
+      <div id="spaceEmpty" hidden>이 배치에는 객체가 없습니다. 모델 탭에서 도면을 확인하세요.</div>
+      <div id="hint"></div>
+      <div class="zoomctl">
+        <button type="button" data-act="zin" title="확대 (+)" aria-label="확대"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+        <button type="button" data-act="zout" title="축소 (-)" aria-label="축소"><svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg></button>
+      </div>
+    </div>
+
+    <aside class="props" aria-label="객체 속성">
+      <div class="phead"><h2>객체 속성 <span class="muted" id="selCount"></span></h2><button type="button" class="btn sm ghost" id="propsClose">닫기</button></div>
+      <div class="scroll" id="propsBody"></div>
+      <div class="meas" id="measPanel" hidden>
+        <div class="phead"><h2>측정 결과</h2><button type="button" class="btn sm ghost" id="measClear">지우기</button></div>
+        <ul id="measList"></ul>
+      </div>
+    </aside>
+    <div id="scrim"></div>
+  </main>
+
+  <footer class="foot">
+    <div class="foot-in">
+      <div id="tabs" role="tablist" aria-label="모델과 배치"></div>
+      <div class="status">
+        <span class="xy"><span class="muted">X</span> <span id="cx">0</span>&nbsp; <span class="muted">Y</span> <span id="cy">0</span></span>
+        <span class="opt zoom" id="zoomPct" title="전체 보기 대비 배율">100%</span>
+        <span class="sbgrp">
+          <button type="button" id="snapBtn" aria-pressed="true" title="객체 스냅 (S)">스냅</button><button type="button" id="snapMore" class="caretbtn" aria-haspopup="true" title="스냅 종류 설정"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 14l5-5 5 5"/></svg></button>
+        </span>
+        <button type="button" class="opt" data-act="dash" title="선종류 표시">선종류</button>
+        <button type="button" class="opt" data-act="mono" title="흑백 보기">흑백</button>
+        <button type="button" data-act="bg" title="배경색 전환">배경</button>
+      </div>
+    </div>
+  </footer>
+  <div class="tags"><div class="tags-in"><span>#도면뷰어</span><span>#DWG파일열기</span><span>#DXF</span><span>#AutoCAD</span><span>#LibreDWG</span><span>#무료배포</span><span>#GPL</span><span>#블록집계</span><span>#단일HTML</span><span>#오프라인</span><span>#바이브코딩</span></div></div>
+</div>
+
+<input type="file" id="fileInput" accept=".dwg,.dxf" hidden>
+<div class="overlay" id="drop" hidden>DWG · DXF 파일을 놓으면 바로 열립니다</div>
+<div class="overlay" id="loading" hidden><div class="card"><div class="spin"></div><strong id="loadingMsg">도면을 여는 중</strong><p class="muted" style="margin:6px 0 0;font-size:12px">파일은 이 브라우저 안에서만 처리되고 외부로 전송되지 않습니다.</p></div></div>
+<div class="overlay" id="error" hidden>
+  <div class="card" role="alertdialog" aria-labelledby="errTitle">
+    <h2 id="errTitle">도면을 열지 못했습니다</h2>
+    <p id="errMsg"></p>
+    <div id="errDxf">
+      <p>DXF로 변환하면 대부분 열립니다.</p>
+      <ol>
+        <li>무료 프로그램 <a href="https://www.opendesign.com/guestfiles/oda_file_converter" target="_blank" rel="noopener">ODA File Converter</a>를 설치합니다.</li>
+        <li>Output version은 ACAD2018, Output file type은 DXF를 고릅니다.</li>
+        <li>변환된 .dxf 파일을 이 화면에 다시 끌어다 놓습니다.</li>
+      </ol>
+    </div>
+    <div class="acts"><button type="button" class="btn" data-open>다른 파일 열기</button><button type="button" class="btn" id="errClose">닫기</button></div>
+  </div>
+</div>
+<div class="overlay" id="about" hidden>
+  <div class="card" role="dialog" aria-modal="true" aria-labelledby="aboutTitle">
+    <div class="ahead"><h2 id="aboutTitle">도면 뷰어</h2><p class="muted" id="aboutVer"></p></div>
+    <div class="abody">
+      <section><h3>소개</h3><p>DWG·DXF 도면을 브라우저에서 여는 무료 뷰어입니다. 도면 파일은 사용자의 브라우저 안에서만 처리되며 어디로도 전송되지 않습니다. 개인과 기업 모두 무료로 사용할 수 있습니다.</p></section>
+      <section><h3>라이선스</h3><p id="aboutCopy"></p>
+        <p style="margin-top:6px">이 프로그램은 자유 소프트웨어입니다. GNU 일반 공중 사용 허가서(GPL) 버전 3의 조건에 따라 재배포하거나 수정할 수 있습니다.</p>
+        <p class="note" style="margin-top:6px" id="aboutSource"></p></section>
+      <section><h3>보증 없음</h3><p>이 프로그램은 유용하게 쓰이기를 바라며 배포되지만, 상품성이나 특정 목적 적합성에 대한 묵시적 보증을 포함해 어떠한 보증도 하지 않습니다. 도면 표시와 측정값은 원본과 다를 수 있으니, 제작·검사 같은 중요한 판단은 원본 CAD 프로그램에서 확인하세요.</p>
+        <p class="note" style="margin-top:6px">This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.</p></section>
+      <section><h3>사용한 오픈소스</h3><div class="tblwrap"><table class="lic"><thead><tr><th>구성 요소</th><th>저작권</th><th>라이선스</th></tr></thead><tbody>
+        <tr><td>LibreDWG<br><span class="muted">DWG 해석 엔진</span></td><td>Free Software Foundation, Inc.</td><td>GPL-3.0 이상</td></tr>
+        <tr><td>@mlightcad/libredwg-web 0.7.14<br><span class="muted">LibreDWG 웹어셈블리 빌드</span></td><td>MLight Lee</td><td>GPL-3.0</td></tr>
+        <tr><td>@mlightcad/dxf-json 1.2.8<br><span class="muted">DXF 해석</span></td><td>MLight Lee</td><td>GPL-3.0</td></tr>
+        <tr><td>Emscripten 런타임<br><span class="muted">웹어셈블리 연결 코드</span></td><td>Emscripten authors</td><td>MIT</td></tr>
+        <tr><td>IBM Plex Sans KR · Mono<br><span class="muted">화면 글꼴, 인터넷 연결 시 Google Fonts에서 불러옴</span></td><td>IBM Corp.</td><td>SIL OFL 1.1</td></tr>
+      </tbody></table></div></section>
+      <section><h3>상표</h3><p class="note">AutoCAD와 DWG는 미국 및 기타 국가에서 Autodesk, Inc.의 상표 또는 등록상표입니다. 이 프로그램은 Autodesk와 관련이 없으며 Autodesk의 승인이나 보증을 받지 않았습니다.</p></section>
+      <section><details><summary>GNU GPL 버전 3 전문 보기</summary><pre id="gplText"></pre></details></section>
+    </div>
+    <div class="afoot"><button type="button" class="btn" id="aboutClose">닫기</button></div>
+  </div>
+</div>
+<div class="menu" id="appMenu" role="menu" hidden>
+  <button type="button" role="menuitem" data-open><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span>열기…</span><kbd>Ctrl+O</kbd></button>
+  <button type="button" role="menuitem" data-act="close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg><span>닫기</span></button>
+  <hr>
+  <button type="button" role="menuitem" data-act="png" class="local-only" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="M21 16l-5-5-8 8"/></svg><span>현재 화면을 PNG로 저장</span></button>
+  <button type="button" role="menuitem" data-act="blk-copy"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg><span>블록 집계표 복사</span></button>
+  <button type="button" role="menuitem" data-act="meas-copy"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg><span>측정 결과 복사</span></button>
+  <hr>
+  <button type="button" role="menuitem" data-act="keys"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg><span>단축키</span><kbd>?</kbd></button>
+  <button type="button" role="menuitem" data-about><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/></svg><span>프로그램 정보 · 라이선스</span></button>
+</div>
+<div class="menu" id="ctxMenu" role="menu" hidden></div>
+<div class="menu pop" id="snapPop" hidden>
+  <div class="pop-title">객체 스냅 설정</div>
+  <label><input type="checkbox" data-snapchk="0"> 끝점</label>
+  <label><input type="checkbox" data-snapchk="1"> 중간점</label>
+  <label><input type="checkbox" data-snapchk="2"> 중심</label>
+  <label><input type="checkbox" data-snapchk="3"> 사분점 · 노드</label>
+  <label><input type="checkbox" data-snapchk="4"> 삽입점</label>
+</div>
+<div class="overlay" id="keys" hidden>
+  <div class="card" role="dialog" aria-modal="true" aria-labelledby="keysTitle">
+    <h2 id="keysTitle">단축키</h2>
+    <table class="lic keytbl"><tbody>
+      <tr><td><kbd>Ctrl</kbd><kbd>O</kbd></td><td>도면 열기</td><td><kbd>F</kbd></td><td>전체 보기</td></tr>
+      <tr><td><kbd>W</kbd></td><td>창 확대</td><td><kbd>P</kbd></td><td>화면 이동</td></tr>
+      <tr><td><kbd>+</kbd> <kbd>-</kbd></td><td>확대 · 축소</td><td><kbd>휠</kbd></td><td>커서 위치 기준 확대</td></tr>
+      <tr><td><kbd>D</kbd></td><td>거리 측정</td><td><kbd>A</kbd></td><td>면적 측정</td></tr>
+      <tr><td><kbd>I</kbd></td><td>점 좌표</td><td><kbd>S</kbd></td><td>스냅 켜기 · 끄기</td></tr>
+      <tr><td><kbd>Enter</kbd></td><td>면적 닫기</td><td><kbd>Esc</kbd></td><td>취소 · 선택 해제</td></tr>
+      <tr><td><kbd>Ctrl</kbd><kbd>F</kbd></td><td>문자 검색</td><td><kbd>L</kbd></td><td>레이어 패널</td></tr>
+      <tr><td>가운데 버튼</td><td>끌어서 이동</td><td>오른쪽 클릭</td><td>바로가기 메뉴</td></tr>
+    </tbody></table>
+    <div class="acts" style="margin-top:14px"><button type="button" class="btn" data-close="keys">닫기</button></div>
+  </div>
+</div>
+<div id="toast" hidden></div>
+<textarea id="copyFallback" hidden readonly></textarea>
+<script type="module">/*__APP__*/</script>
+<script type="text/plain" id="gpl-src">/*__GPL__*/</script>
+<script type="application/octet-stream" id="wasm-gz">/*__WASM__*/</script>
